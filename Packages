@@ -1,0 +1,9 @@
+# Basic Packages
+!pip install numpy
+!pip install matplotlib
+!pip install pandas
+
+# Data Scraping
+!pip install lasair
+
+# Machine Learning & Neural Networks
