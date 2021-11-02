@@ -4,6 +4,13 @@
 !pip install pandas
 
 # Data Scraping
+!pip install requests
+
+# Brokers
 !pip install lasair
+!pip install alerce
+
+# Data Science
+!pip install george
 
 # Machine Learning & Neural Networks
