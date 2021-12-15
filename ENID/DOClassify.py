@@ -81,7 +81,6 @@ def network_evaluation(network, X_test, Y_test, train_loss, evaluate, version_di
         f1_epoch.append(f1_score(y_true, y_pred, average='weighted'))
 
     index = f1_epoch.index(max(f1_epoch))
-    print(index)
     network.load_state_dict(torch.load(version_directory+'/Weights_'+str(index)))
     os.rename(version_directory+'/Weights_'+str(index), version_directory+'/Weights_FINAL')
     
