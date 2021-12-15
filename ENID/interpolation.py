@@ -5,9 +5,8 @@ import pickle
 import torch
 import torch.nn.functional as F
 import numpy as np
-
-
-
+from itertools import repeat
+import os
 
 
 def GP_simple(x, y, yerr, plot=False):
@@ -48,7 +47,7 @@ def GP_simple(x, y, yerr, plot=False):
         #plt.gca().invert_yaxis()
         plt.show()
     
-    return x_pred, pred, pred_error
+    return pred, pred_error
     
 def mag2flux_normalised(mag, mag_error):
     
@@ -66,9 +65,11 @@ def mag2flux_normalised(mag, mag_error):
             
     # Normalise the flux so that the peak value is 1
     scale_factor = np.nanmax(lc_flux)
+    #scale_factor = 1
     
     lc_flux = lc_flux / scale_factor
     lc_error = lc_error / scale_factor
+    assert np.nanmax(lc_flux) == 1, 'Normalisation failed.'
     
     return lc_flux, lc_error, scale_factor
 
@@ -92,28 +93,26 @@ def interpolate(magnitude, magnitude_error, mjd):
     flux, flux_error, scale = mag2flux_normalised(magnitude, magnitude_error)
     
     # Interpolate the lightcurve with a simple Gaussian Process
-    xpred, pred, pred_error = GP_simple(mjd, flux, flux_error)
+    pred, pred_error = GP_simple(mjd, flux, flux_error)
     
-    pred *= scale
-    pred_error *= scale 
+    #pred *= scale
+    #pred_error *= scale 
     
     # Convert back to magnitudes
-    pred, pred_error = flux2mag(pred, pred_error)
-    
-    return pred, pred_error, xpred
+    #pred, pred_error = flux2mag(pred, pred_error)
+    pred = pred / np.nanmax(pred)
+    pred_error = pred_error / np.nanmax(pred_error) 
+    return pred, pred_error
 
 def label_encoding(labels):
-    print(labels)
-    # Ignore the TDEs for the moment. 
-    # They have label -1, but this can be changed if we want to study these.
-    idx = np.where(labels[:,1] != -1)
-    
     # Determine the number of classes
-    num_classes = len(np.unique(labels[idx]))
+    num_classes = len(np.unique(labels))
     
     # Encode the array in a tensor
-    labels_torch = torch.tensor(labels[idx])
-    labels_encoded = F.one_hot(labels_torch, num_classes=num_classes)
+    if torch.is_tensor(labels) == False:
+         labels = torch.tensor(labels)
+     
+    labels_encoded = F.one_hot(labels, num_classes=num_classes)
     
     return labels_encoded
 
@@ -126,96 +125,115 @@ def label_translate(labels):
     # Get names of accepted classes
     keys_list = dictionary.keys()
     
+    assert type(labels) == list, "ERROR : Input labels must be of type list."
+    assert len(labels[0]) == 2, "ERROR : Input labels must be a list containing both class and ID for each source."
+    
     # Translate classes
-    labels_translated = [dictionary[label[0]] for label in labels if label[0] in keys_list]
+    labels_id = []
+    labels_name = [] 
+    labels_idx = []
     
+    for i in range(len(labels)):
+        label = labels[i]
+        
+        if label[0] in keys_list:
+            labels_id.append(int(dictionary[label[0]][1]))
+            labels_name.append(dictionary[label[0]][0])
+            labels_idx.append(i)
+            
     # Format in a numpy array for future processing
-    labels_translated = np.array(labels_translated)
-    
-    return labels_translated
+    labels_translated = np.array([labels_name, labels_id])
 
-def preprocessing(filename):
+    return labels_translated.T, labels_idx
+                                 
+def initialise(data_dictionary):
+    
+    # Combine detections and non detections
+    datadict = dettwopredet(data_dictionary, 14, 2)
+    fails = []
+  
+    # Format labels and retain the indexes of those we use
+    label_dictionary = data_dictionary['Label']
+    labels, idxs = label_translate(label_dictionary)
+   
+    l = 200
+    m = len(idxs)
+   
+    # Initialise custom python arrays
+    empty_arrays = {'data': np.zeros((m,2,l)), 
+                    'error': np.zeros((m,2,l)),
+                    'labels': labels,
+                    'failed': fails}
+    
+    return empty_arrays, idxs
+
+def source_interpolate(data_dictionary_single_source):
+    
+    # Interpolate both G and R-band lightcurves
+    lightcurve_R, error_R = interpolate(data_dictionary_single_source['R_mag_wn'], 
+                                               data_dictionary_single_source['R_err_wn'], 
+                                               data_dictionary_single_source['R_mjd_wn'])
+    lightcurve_G, error_G = interpolate(data_dictionary_single_source['G_mag_wn'], 
+                                               data_dictionary_single_source['G_err_wn'], 
+                                               data_dictionary_single_source['G_mjd_wn'])
+    
+    nR = len(lightcurve_R)
+    nG = len(lightcurve_G)
+        
+    interpolated_dictionary = {'lc_R': lightcurve_R, 'lc_G': lightcurve_G, 
+                               'err_R': error_R, 'err_G': error_G, 
+                               'length_R': nR, 'length_G': nG}
+    
+    return interpolated_dictionary
+        
+def array_update(dummy_dictionary, interpolated_dictionary, row_index):
+    idx_R = min(interpolated_dictionary['length_R'], dummy_dictionary['data'].shape[2])
+    idx_G = min(interpolated_dictionary['length_G'], dummy_dictionary['data'].shape[2])
+    
+    dummy_dictionary['data'][row_index,0,0:idx_R] = interpolated_dictionary['lc_R'][0:idx_R]
+    dummy_dictionary['data'][row_index,1,0:idx_G] = interpolated_dictionary['lc_G'][0:idx_G]
+    
+    dummy_dictionary['error'][row_index,0,0:idx_R] = interpolated_dictionary['err_R'][0:idx_R]
+    dummy_dictionary['error'][row_index,1,0:idx_G] = interpolated_dictionary['err_G'][0:idx_G]
+    
+    return dummy_dictionary
+
+def preprocessing(load_filename, version):
     
     # Load the data
-    file = open(filename, "rb")
+    file = open(load_filename, "rb")
     datadict = pickle.load(file)
     
-    m = len(datadict['Data'])
-    l = 6000
-    
-    # Initialise custom python arrays
-    data_initialised = np.zeros((2*m,l)) + np.nan
-    error_initialised = np.zeros((2*m,l)) + np.nan
-    mjd_initialised = np.zeros((2*m,l)) + np.nan
-    
-    # Steps in this function : 
-    # 1. Combine detections and non detections
-    datadict = dettwopredet(datadict, 14, 2)
-    fails = []
-    
-    i = 0
-    j = 0
-    broken = False
-    
-    while i < m:
+    # Initialise arrays
+    dummy_dict, source_idx = initialise(datadict)
+  
+    for row in range(len(source_idx)):
         
-        # 2. Interpolate the data
+        index = source_idx[row]
+        
         try:
-            lightcurve_R, error_R, mjd_R = interpolate(datadict['Data'][i]['R_mag_wn'], datadict['Data'][i]['R_err_wn'], datadict['Data'][i]['R_mjd_wn'])
-            lightcurve_G, error_G, mjd_G = interpolate(datadict['Data'][i]['G_mag_wn'], datadict['Data'][i]['G_err_wn'], datadict['Data'][i]['G_mjd_wn'])
             
-            # 3. Group lightcurves in a global array
-            n_R = len(lightcurve_R)
-            n_G = len(lightcurve_G)
-        
-            if n_R > l-1:
-                print('\nERROR : Lightcurve dimensions exceed the allowed size of ' + str(l) + '. Intialise the global array with a size larger than ' + str(n_R) + '.\n')
-                broken = True
-                break
-        
-            elif n_G > l-1:
-                print('\nERROR : Lightcurve dimensions exceed the allowed size of ' + str(l) + '. Intialise the global array with a size larger than ' + str(n_G) + '.\n')
-                broken = True
-                break
+            # Interpolate the data
+            interpolated = source_interpolate(datadict['Data'][index])
+            dummy_dict = array_update(dummy_dict, interpolated, row)
             
-            else:
-                data_initialised[j, 0:n_R] = lightcurve_R
-                error_initialised[j, 0:n_R] = error_R
-                mjd_initialised[j, 0:n_R] = mjd_R
-        
-                data_initialised[j+1, 0:n_G] = lightcurve_G
-                error_initialised[j+1, 0:n_G] = error_G
-                mjd_initialised[j+1, 0:n_G] = mjd_G
-                    
         except:
-            print('\nERROR : Interpolation failed. Discarding entry.\n')
-            fails.append([i, datadict['Name'][i], datadict['Label'][i]])
             
-        i += 1
-        j += 2
-    
-    if broken == True:
-        data = -1
-        labels = -1
-        
-    else:
-        # 4. Trim array down to longest lightcurve
-        count = [np.count_nonzero(np.isnan(data_initialised[i,:])) for i in range(m)]
-        col = l - max(count)
-        data = data_initialised[:, 0:col-1]
-        error = error_initialised[:, 0:col-1]
-        
-        # 5. Structure labels
-        labeldict = datadict['Label']
-        labels = label_translate(labeldict)
-
+            print('\nERROR : Interpolation failed. Discarding entry.\n')
+            dummy_dict['failed'].append([index, datadict['Name'][index], datadict['Label'][index]])
+            
     print('Saving Arrays...')
-    np.save('data_lc_1', data)
-    np.save('labels_1', labels)
-    np.save('data_err_1', error)
-    np.save('fails_1', fails)
-                    
-    return data, labels, error, fails
+    
+    directory = 'Data/'+version
+    if not os.path.exists(directory):
+        os.makedirs(directory)
+    
+    np.save(directory+'/data_lc', dummy_dict['data'])
+    np.save(directory+'/labels', np.array(dummy_dict['labels']))
+    np.save(directory+'/data_err', dummy_dict['error'])
+    np.save(directory+'/fails', np.array(dummy_dict['failed'], dtype=object))
+
+    return dummy_dict
 
 def label_count(labels_list):
     labels_uncoded = array()
