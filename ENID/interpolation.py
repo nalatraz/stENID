@@ -7,7 +7,7 @@ import torch.nn.functional as F
 import numpy as np
 from itertools import repeat
 import os
-
+import matplotlib.pyplot as plt
 
 def GP_simple(x, y, yerr, plot=False):
     
@@ -64,12 +64,12 @@ def mag2flux_normalised(mag, mag_error):
         lc_error = np.append(lc_error, flux_error)
             
     # Normalise the flux so that the peak value is 1
-    scale_factor = np.nanmax(lc_flux)
-    #scale_factor = 1
+    #scale_factor = np.nanmax(lc_flux)
+    scale_factor = 1
     
-    lc_flux = lc_flux / scale_factor
-    lc_error = lc_error / scale_factor
-    assert np.nanmax(lc_flux) == 1, 'Normalisation failed.'
+    #lc_flux = lc_flux / scale_factor
+    #lc_error = lc_error / scale_factor
+    #assert np.nanmax(lc_flux) == 1, 'Normalisation failed.'
     
     return lc_flux, lc_error, scale_factor
 
@@ -88,20 +88,13 @@ def flux2mag(flux, flux_error):
     return lc_mag, lc_mag_error
 
 def interpolate(magnitude, magnitude_error, mjd):
-    
     # Compute the normalised flux
     flux, flux_error, scale = mag2flux_normalised(magnitude, magnitude_error)
     
     # Interpolate the lightcurve with a simple Gaussian Process
     pred, pred_error = GP_simple(mjd, flux, flux_error)
+    pred *= scale
     
-    #pred *= scale
-    #pred_error *= scale 
-    
-    # Convert back to magnitudes
-    #pred, pred_error = flux2mag(pred, pred_error)
-    pred = pred / np.nanmax(pred)
-    pred_error = pred_error / np.nanmax(pred_error) 
     return pred, pred_error
 
 def label_encoding(labels):
@@ -169,6 +162,8 @@ def initialise(data_dictionary):
 
 def source_interpolate(data_dictionary_single_source):
     
+    # Normalise lightcurves relative to R
+    
     # Interpolate both G and R-band lightcurves
     lightcurve_R, error_R = interpolate(data_dictionary_single_source['R_mag_wn'], 
                                                data_dictionary_single_source['R_err_wn'], 
@@ -179,7 +174,11 @@ def source_interpolate(data_dictionary_single_source):
     
     nR = len(lightcurve_R)
     nG = len(lightcurve_G)
-        
+    
+    scale = np.nanmax(lightcurve_R)
+    lightcurve_R /= scale
+    lightcurve_G /= scale
+    
     interpolated_dictionary = {'lc_R': lightcurve_R, 'lc_G': lightcurve_G, 
                                'err_R': error_R, 'err_G': error_G, 
                                'length_R': nR, 'length_G': nG}

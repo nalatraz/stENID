@@ -125,3 +125,13 @@ def network_evaluation(network, X_test, Y_test, train_loss, evaluate, version_di
     plt.title('Loss Evolution During Training', fontsize=25)
 
     plt.savefig(version_directory+'/TrainingLoss.png')
+    
+    plt.figure(figsize=(10,6))
+    plt.plot(np.arange(0, len(f1_epoch)), f1_epoch, linewidth=3, label='F1-measure')
+    plt.axvline(index, 0, 100, linewidth=3, color='r', label='Selected Model')
+    plt.legend()
+    plt.xlabel('Epoch', fontsize=20)
+    plt.ylabel('Cross-Entropy Loss', fontsize=20)
+    plt.title('Loss Evolution During Training', fontsize=25)
+
+    plt.savefig(version_directory+'/TestF1.png')
