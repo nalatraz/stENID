@@ -139,10 +139,10 @@ def label_translate(labels):
 
     return labels_translated.T, labels_idx
                                  
-def initialise(data_dictionary):
+def initialise(data_dictionary,timediff,noofpoint):
     
     # Combine detections and non detections
-    datadict = dettwopredet(data_dictionary, 14, 2)
+    datadict = dettwopredet(data_dictionary, timediff, noofpoint)
     fails = []
   
     # Format labels and retain the indexes of those we use
@@ -197,14 +197,14 @@ def array_update(dummy_dictionary, interpolated_dictionary, row_index):
     
     return dummy_dictionary
 
-def preprocessing(load_filename, version):
+def preprocessing(load_filename, version,timediff,noofpoint):
     
     # Load the data
     file = open(load_filename, "rb")
     datadict = pickle.load(file)
     
     # Initialise arrays
-    dummy_dict, source_idx = initialise(datadict)
+    dummy_dict, source_idx = initialise(datadict,timediff,noofpoint)
   
     for row in range(len(source_idx)):
         
